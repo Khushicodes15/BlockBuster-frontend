@@ -1,26 +1,33 @@
 @import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #FAFAFA;
+  --foreground: #111827;
+  --accent-olive: #727038;
+  --accent-olive-hover: #5A582C;
+  --border-light: #E5E7EB;
+  --card-bg: #FFFFFF;
+  --status-green: #10B981;
+  --status-yellow: #EAB308;
+  --status-red: #EF4444;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-accent-olive: var(--accent-olive);
+  --color-accent-olive-hover: var(--accent-olive-hover);
+  --color-border-light: var(--border-light);
+  --color-card-bg: var(--card-bg);
+  --color-status-green: var(--status-green);
+  --color-status-yellow: var(--status-yellow);
+  --color-status-red: var(--status-red);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
 }
