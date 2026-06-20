@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { MapContainer, TileLayer, CircleMarker, Polyline, Tooltip, ZoomControl, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, CircleMarker, Polyline, Tooltip, ZoomControl, Marker } from 'react-leaflet';
 import { useDashboard } from './DashboardContext';
 import { Search, Layers, X } from 'lucide-react';
 import L from 'leaflet';
+import type { NetworkStatusEntry } from '@/lib/types';
 import { useMap } from 'react-leaflet';
 
 // Helper to determine color based on vc_ratio or color string
@@ -25,7 +26,7 @@ function MapController({ center }: { center: L.LatLngExpression | null }) {
   const map = useMap();
   React.useEffect(() => {
     if (center) {
-      map.flyTo(center, 14, { duration: 1 });
+      map.flyTo(center, 15, { duration: 1 });
     }
   }, [center, map]);
   return null;
@@ -44,6 +45,7 @@ export default function MapComponent() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showStations, setShowStations] = useState(false);
   const [mapCenter, setMapCenter] = useState<L.LatLngExpression | null>(null);
+  const [searchPin, setSearchPin] = useState<{ lat: number; lng: number; label: string } | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [searchFeedback, setSearchFeedback] = useState<string | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
@@ -98,7 +100,9 @@ export default function MapComponent() {
 
   const handleSelectSuggestion = (suggestion: { lat?: number; lng?: number; label: string }) => {
     if (suggestion.lat && suggestion.lng) {
+      // New array each time so flyTo re-fires even for the same place.
       setMapCenter([suggestion.lat, suggestion.lng]);
+      setSearchPin({ lat: suggestion.lat, lng: suggestion.lng, label: suggestion.label });
       setSearchQuery(suggestion.label);
       setShowSuggestions(false);
       setSearchFeedback(null);
@@ -122,26 +126,19 @@ export default function MapComponent() {
   // Create a map of corridor status for quick lookup
   // Merge baseline network_status with incident's playbook network_state
   const statusMap = useMemo(() => {
-    const map = new Map<string, any>();
-    
+    const map = new Map<string, NetworkStatusEntry>();
+
     // First load baseline network status
     networkStatus.forEach(status => {
       map.set(status.corridor, status);
     });
 
-    // Then overlay incident's playbook network state (has disaster impact)
+    // Then overlay the selected incident's real playbook network_state
+    // (the actual simulated disaster impact — no fabrication).
     const playbookNetworkState = selectedIncident?.playbook?.network_state;
     if (playbookNetworkState) {
-      playbookNetworkState.forEach((status: any) => {
-        const simStatus = { ...status };
-        // Artificially boost congestion for the mock incident so the map shows visual spillover
-        if (selectedIncident?.id === "MOCK-INCIDENT-001") {
-          if (simStatus.corridor === 'Magadi Road') simStatus.vc_ratio = 0.95;
-          if (simStatus.corridor === 'West of Chord Road') simStatus.vc_ratio = 0.85;
-          if (simStatus.corridor === 'Tumkur Road') simStatus.vc_ratio = 0.75;
-          if (simStatus.corridor === 'Bellary Road 1') simStatus.vc_ratio = 0.82;
-        }
-        map.set(simStatus.corridor, simStatus);
+      playbookNetworkState.forEach((status: NetworkStatusEntry) => {
+        map.set(status.corridor, status);
       });
     }
 
@@ -171,10 +168,25 @@ export default function MapComponent() {
     return pathEdges;
   }, [selectedIncident, corridorCentroids]);
 
-  // Compute all corridor graph edges with colors from network status
-  const corridorEdges = useMemo(() => {
-    return []; // FULL MESH REMOVED per instruction
-  }, []);
+  // Static connector lines between corridors (corridor-graph edges).
+  const connectorEdges = useMemo(() => {
+    const byName = new Map(corridorCentroids.map((c) => [c.corridor, c]));
+    const edges: { id: string; positions: L.LatLngExpression[] }[] = [];
+    corridorGraph.forEach((e, i) => {
+      const a = byName.get(e.source);
+      const b = byName.get(e.target);
+      if (a && b) {
+        edges.push({
+          id: `edge-${i}`,
+          positions: [
+            [a.latitude, a.longitude],
+            [b.latitude, b.longitude],
+          ],
+        });
+      }
+    });
+    return edges;
+  }, [corridorGraph, corridorCentroids]);
 
   const blockedCorridors = selectedIncident?.blocked_corridors || [];
 
@@ -200,7 +212,7 @@ export default function MapComponent() {
               onKeyDown={handleSearch}
             />
             {searchQuery && (
-              <button onClick={() => { setSearchQuery(''); setShowSuggestions(false); setSearchFeedback(null); }} className="ml-1">
+              <button onClick={() => { setSearchQuery(''); setShowSuggestions(false); setSearchFeedback(null); setSearchPin(null); }} className="ml-1">
                 <X className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600" />
               </button>
             )}
@@ -251,6 +263,15 @@ export default function MapComponent() {
           url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
         />
         <ZoomControl position="bottomright" />
+
+        {/* Corridor-graph connectors (subtle network skeleton) */}
+        {connectorEdges.map((edge) => (
+          <Polyline
+            key={edge.id}
+            positions={edge.positions}
+            pathOptions={{ color: '#94A3B8', weight: 1, opacity: 0.35 }}
+          />
+        ))}
 
         {/* Render Diversion Path (dashed blue overlay) */}
         {diversionEdges.map(edge => (
@@ -322,11 +343,11 @@ export default function MapComponent() {
           });
 
           return (
-            <Marker 
+            <Marker
               position={[blockedCentroid.latitude, blockedCentroid.longitude]}
               icon={icon}
             >
-              <Tooltip permanent direction="right" offset={[24, -10]} className="bg-white/90 backdrop-blur-sm border border-red-200 shadow-lg !p-2 !rounded-lg">
+              <Tooltip permanent direction="top" offset={[0, -22]} className="bg-white/95 backdrop-blur-sm border border-red-200 shadow-lg !p-2 !rounded-lg">
                 <div className="flex flex-col items-start min-w-[150px]">
                   <h3 className="font-bold text-gray-900 text-[11px] leading-tight uppercase tracking-wider">{selectedIncident.label || blockedCorridors[0]}</h3>
                   <p className="text-[10px] text-gray-600 mt-0.5 mb-2">{blockedCorridors.join(' / ')}</p>
@@ -339,6 +360,19 @@ export default function MapComponent() {
             </Marker>
           );
         })()}
+
+        {/* Search result pin */}
+        {searchPin && (
+          <CircleMarker
+            center={[searchPin.lat, searchPin.lng]}
+            radius={10}
+            pathOptions={{ color: '#727038', weight: 3, fillColor: '#727038', fillOpacity: 0.25 }}
+          >
+            <Tooltip permanent direction="top" offset={[0, -8]}>
+              {searchPin.label}
+            </Tooltip>
+          </CircleMarker>
+        )}
 
         {/* Render Stations (Toggled) */}
         {showStations && stations.map(station => (

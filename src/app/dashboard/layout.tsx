@@ -3,6 +3,7 @@ import TopBar from '@/components/TopBar';
 import Sidebar from '@/components/Sidebar';
 import AlertTicker from '@/components/AlertTicker';
 import { DashboardProvider } from '@/components/DashboardContext';
+import { BackendOfflineBanner } from '@/components/BackendOfflineBanner';
 
 export default function DashboardLayout({
   children,
@@ -12,6 +13,7 @@ export default function DashboardLayout({
   return (
     <DashboardProvider>
       <div className="flex flex-col h-screen w-screen overflow-hidden bg-background">
+        <BackendOfflineBanner />
         <TopBar />
         <div className="flex flex-col md:flex-row flex-1 overflow-hidden min-h-0">
           <Sidebar />

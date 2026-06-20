@@ -1,200 +1,196 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import * as api from '@/lib/api';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+} from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  useHealth,
+  useCorridors,
+  useCorridorCentroids,
+  useCorridorGraph,
+  useStations,
+  useJunctions,
+  useOfficersSummary,
+  useNetworkStatus,
+  useIncidents,
+  useUpcomingEvents,
+} from '@/lib/queries';
+import type {
+  Centroid,
+  CorridorEdge,
+  Incident,
+  Junction,
+  MarshalAvailability,
+  NetworkStatusEntry,
+  Playbook,
+  ScheduledEvent,
+  Station,
+  Weather,
+} from '@/lib/types';
 
 interface DashboardState {
   systemStatus: string;
   currentTime: Date;
   activeEventsCount: number;
-  availableMarshals: { available: number; total: number } | null;
-  networkStatus: any[];
+  availableMarshals: MarshalAvailability | null;
+  networkStatus: NetworkStatusEntry[];
   corridors: string[];
-  corridorCentroids: any[];
-  corridorGraph: any[];
-  stations: any[];
-  junctions: any[];
-  incidents: any[];
-  upcomingEvents: any[];
-  selectedIncident: any | null;
-  setSelectedIncident: (incident: any) => void;
-  updateLocalIncidentPlaybook: (incidentId: string, playbook: any) => void;
+  corridorCentroids: Centroid[];
+  corridorGraph: CorridorEdge[];
+  stations: Station[];
+  junctions: Junction[];
+  incidents: Incident[];
+  upcomingEvents: ScheduledEvent[];
+  selectedIncident: Incident | null;
+  setSelectedIncident: (incident: Incident | null) => void;
+  updateLocalIncidentPlaybook: (incidentId: string | number, playbook: Playbook) => void;
   refreshData: () => Promise<void>;
   isMounted: boolean;
-  weather: { temp: number; condition: string; humidity: number } | null;
+  weather: Weather | null;
+  /** Initial data load still in flight. */
+  isLoading: boolean;
+  /** Backend health check is failing — surface an offline banner. */
+  isBackendDown: boolean;
 }
 
 const DashboardContext = createContext<DashboardState | undefined>(undefined);
 
 // Mock weather for Bengaluru (data scope locked — no external API allowed per project rules)
-function getMockWeather(): { temp: number; condition: string; humidity: number } {
-  const hour = new Date().getHours();
-  if (hour >= 6 && hour < 10) return { temp: 24, condition: "Partly Cloudy", humidity: 72 };
-  if (hour >= 10 && hour < 14) return { temp: 31, condition: "Sunny", humidity: 55 };
-  if (hour >= 14 && hour < 17) return { temp: 33, condition: "Partly Cloudy", humidity: 48 };
-  if (hour >= 17 && hour < 20) return { temp: 28, condition: "Light Rain", humidity: 78 };
-  if (hour >= 20 && hour < 23) return { temp: 23, condition: "Clear", humidity: 68 };
-  return { temp: 21, condition: "Clear", humidity: 75 };
+function getMockWeather(hour: number): Weather {
+  if (hour >= 6 && hour < 10) return { temp: 24, condition: 'Partly Cloudy', humidity: 72 };
+  if (hour >= 10 && hour < 14) return { temp: 31, condition: 'Sunny', humidity: 55 };
+  if (hour >= 14 && hour < 17) return { temp: 33, condition: 'Partly Cloudy', humidity: 48 };
+  if (hour >= 17 && hour < 20) return { temp: 28, condition: 'Light Rain', humidity: 78 };
+  if (hour >= 20 && hour < 23) return { temp: 23, condition: 'Clear', humidity: 68 };
+  return { temp: 21, condition: 'Clear', humidity: 75 };
 }
 
 export function DashboardProvider({ children }: { children: React.ReactNode }) {
+  const queryClient = useQueryClient();
+
   const [isMounted, setIsMounted] = useState(false);
-  const [systemStatus, setSystemStatus] = useState<string>('UNKNOWN');
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
-  const [activeEventsCount, setActiveEventsCount] = useState(0);
-  const [availableMarshals, setAvailableMarshals] = useState<{ available: number; total: number } | null>(null);
-  const [networkStatus, setNetworkStatus] = useState<any[]>([]);
-  const [corridors, setCorridors] = useState<string[]>([]);
-  const [corridorCentroids, setCorridorCentroids] = useState<any[]>([]);
-  const [corridorGraph, setCorridorGraph] = useState<any[]>([]);
-  const [stations, setStations] = useState<any[]>([]);
-  const [junctions, setJunctions] = useState<any[]>([]);
-  const [incidents, setIncidents] = useState<any[]>([]);
-  const [upcomingEvents, setUpcomingEvents] = useState<any[]>([]);
-  const [selectedIncident, setSelectedIncident] = useState<any | null>(null);
-  const [weather, setWeather] = useState<{ temp: number; condition: string; humidity: number } | null>(null);
+  const [currentHour, setCurrentHour] = useState<number>(() => new Date().getHours());
+  const [selectedId, setSelectedId] = useState<string | number | null>(null);
 
-  const incidentsRef = useRef<any[]>([]);
-  useEffect(() => {
-    incidentsRef.current = incidents;
-  }, [incidents]);
+  // --- Server data via shared TanStack Query cache ---
+  const health = useHealth();
+  const corridorsQ = useCorridors();
+  const centroidsQ = useCorridorCentroids();
+  const graphQ = useCorridorGraph();
+  const stationsQ = useStations();
+  const junctionsQ = useJunctions();
+  const officersQ = useOfficersSummary();
+  const networkQ = useNetworkStatus(currentHour);
+  const incidentsQ = useIncidents('ACTIVE');
+  const eventsQ = useUpcomingEvents();
 
-  // Clock and mount
+  // Clock + mount
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount flag for hydration-safe rendering
     setIsMounted(true);
-    setWeather(getMockWeather());
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    const timer = setInterval(() => {
+      const now = new Date();
+      setCurrentTime(now);
+      setCurrentHour(now.getHours());
+    }, 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Allow PlaybookPanel to attach a playbook to a mock incident directly in state
-  // (since mock incidents don't exist on the backend, we can't PATCH them)
-  const updateLocalIncidentPlaybook = useCallback((incidentId: string, playbook: any) => {
-    setIncidents(prev => prev.map(inc =>
-      inc.id === incidentId ? { ...inc, playbook } : inc
-    ));
-    setSelectedIncident((prev: any) =>
-      prev && prev.id === incidentId ? { ...prev, playbook } : prev
+  // Weather is derived (no external API). Gated on mount to avoid hydration drift.
+  const weather = isMounted ? getMockWeather(currentHour) : null;
+
+  // --- Derived collections ---
+  const corridors = corridorsQ.data?.corridors ?? [];
+  const corridorCentroids = centroidsQ.data?.centroids ?? [];
+  const corridorGraph = graphQ.data?.edges ?? [];
+  const stations = stationsQ.data?.stations ?? [];
+  const junctions = junctionsQ.data?.junctions ?? [];
+  const networkStatus = networkQ.data?.network_state ?? [];
+  const upcomingEvents = eventsQ.data?.events ?? [];
+
+  const availableMarshals: MarshalAvailability | null = officersQ.data
+    ? { available: officersQ.data.available_officers, total: officersQ.data.total_officers }
+    : null;
+
+  const systemStatus = health.isLoading
+    ? 'UNKNOWN'
+    : health.data?.status === 'ok'
+      ? 'OPERATIONAL'
+      : 'ERROR';
+
+  // Live incidents only — no fabricated fallback. Use the demo seeder to
+  // populate a reproducible scenario.
+  const incidents: Incident[] = useMemo(
+    () => incidentsQ.data?.incidents ?? [],
+    [incidentsQ.data],
+  );
+
+  const activeEventsCount = incidents.length;
+
+  // Selection: keep a stable id, auto-select the most recent when unset/stale.
+  const selectedIncident = useMemo<Incident | null>(() => {
+    if (incidents.length === 0) return null;
+    if (selectedId != null) {
+      const found = incidents.find((i) => i.id === selectedId);
+      if (found) return found;
+    }
+    const sorted = [...incidents].sort(
+      (a, b) =>
+        new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime(),
     );
+    return sorted[0];
+  }, [incidents, selectedId]);
+
+  const setSelectedIncident = useCallback((incident: Incident | null) => {
+    setSelectedId(incident?.id ?? null);
   }, []);
+
+  // Kept for API compatibility; real incidents persist playbooks via PATCH.
+  const updateLocalIncidentPlaybook = useCallback(
+    (_incidentId: string | number, _playbook: Playbook) => {},
+    [],
+  );
 
   const refreshData = useCallback(async () => {
-    try {
-      const currentHour = new Date().getHours();
-      const [
-        health,
-        corridorsRes,
-        centroidsRes,
-        graphRes,
-        stationsRes,
-        junctionsRes,
-        officersRes,
-        incidentsRes,
-        networkRes,
-        eventsRes
-      ] = await Promise.all([
-        api.fetchHealth().catch(() => ({ status: 'error' })),
-        api.fetchCorridors().catch(() => ({ corridors: [] })),
-        api.fetchCorridorCentroids().catch(() => ({ centroids: [] })),
-        api.fetchCorridorGraph().catch(() => ({ edges: [] })),
-        api.fetchStations().catch(() => ({ stations: [] })),
-        api.fetchJunctions().catch(() => ({ junctions: [] })),
-        api.fetchOfficersSummary().catch(() => null),
-        api.fetchActiveIncidents().catch(() => ({ incidents: [] })),
-        api.fetchNetworkStatus(currentHour).catch(() => ({ network_state: [] })),
-        api.fetchUpcomingEvents().catch(() => ({ events: [] })),
-      ]);
+    await queryClient.invalidateQueries();
+  }, [queryClient]);
 
-      setSystemStatus(health.status === 'ok' ? 'OPERATIONAL' : 'ERROR');
-      setCorridors(corridorsRes.corridors || []);
-      setCorridorCentroids(centroidsRes.centroids || []);
-      setCorridorGraph(graphRes.edges || []);
-      setStations(stationsRes.stations || []);
-      setJunctions(junctionsRes.junctions || []);
-      
-      if (officersRes) {
-        setAvailableMarshals({
-          available: officersRes.available_officers,
-          total: officersRes.total_officers,
-        });
-      }
-
-      const activeList = incidentsRes.incidents || [];
-      
-      // MOCK INJECTION: Only when there are zero real incidents (for prototype demo).
-      if (activeList.length === 0) {
-        // Use incidentsRef to avoid stale closures overwriting the playbook
-        const existingMock = incidentsRef.current.find(i => i.id === "MOCK-INCIDENT-001");
-        if (existingMock) {
-          activeList.push(existingMock);
-        } else {
-          activeList.push({
-            id: "MOCK-INCIDENT-001",
-            created_at: new Date().toISOString(),
-            label: "Road Collapse — Mysore Road",
-            hour: currentHour,
-            blocked_corridors: ["Mysore Road"],
-            playbook: null, // Will be generated live by /playbook-stream
-            status: "ACTIVE",
-          });
-        }
-      }
-
-      setIncidents(activeList);
-      setActiveEventsCount(activeList.length);
-
-      setNetworkStatus(networkRes.network_state || []);
-      setUpcomingEvents(eventsRes.events || []);
-
-      // Update weather
-      setWeather(getMockWeather());
-
-      // Auto-select: most recently created
-      if (activeList.length > 0) {
-        const sorted = [...activeList].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-        
-        setSelectedIncident((prev: any) => {
-          if (!prev) return sorted[0];
-          const exists = sorted.find(i => i.id === prev.id);
-          return exists || sorted[0];
-        });
-      } else {
-        setSelectedIncident(null);
-      }
-      
-    } catch (err) {
-      console.error('Failed to refresh dashboard data:', err);
-    }
-  }, [incidents]);
-
-  // Initial load
-  useEffect(() => {
-    refreshData();
-    const timer = setInterval(refreshData, 60000);
-    return () => clearInterval(timer);
-  }, [refreshData]);
+  const isLoading =
+    incidentsQ.isLoading || centroidsQ.isLoading || networkQ.isLoading;
+  const isBackendDown = health.isError;
 
   return (
-    <DashboardContext.Provider value={{
-      systemStatus,
-      currentTime,
-      activeEventsCount,
-      availableMarshals,
-      networkStatus,
-      corridors,
-      corridorCentroids,
-      corridorGraph,
-      stations,
-      junctions,
-      incidents,
-      upcomingEvents,
-      selectedIncident,
-      setSelectedIncident,
-      updateLocalIncidentPlaybook,
-      refreshData,
-      isMounted,
-      weather,
-    }}>
+    <DashboardContext.Provider
+      value={{
+        systemStatus,
+        currentTime,
+        activeEventsCount,
+        availableMarshals,
+        networkStatus,
+        corridors,
+        corridorCentroids,
+        corridorGraph,
+        stations,
+        junctions,
+        incidents,
+        upcomingEvents,
+        selectedIncident,
+        setSelectedIncident,
+        updateLocalIncidentPlaybook,
+        refreshData,
+        isMounted,
+        weather,
+        isLoading,
+        isBackendDown,
+      }}
+    >
       {children}
     </DashboardContext.Provider>
   );
