@@ -170,7 +170,7 @@ export default function PlaybookPanel() {
     try {
       const advisory = await api.generateAdvisory(playbook);
       const advisoryText = advisory.advisory || 'Traffic advisory: avoid the affected corridors.';
-      const recipients = ['+910000000000'];
+      const recipients = ['+918851652548'];
       await api.dispatchSms(playbook, advisoryText, recipients);
 
       const deployments = officers.map((o: NearestOfficer) => ({
