@@ -93,18 +93,42 @@ export default function PlaybookPanel() {
     !!selectedIncident?.dispatch_result;
   const canDispatch = hasPlaybook && (aiApproved || wcApproved) && !executed;
 
-  // Derive origin/destination from the blocked corridor's graph neighbours
-  // (no backend helper does this). Destination = a non-blocked neighbour.
   const { origin, destination } = useMemo(() => {
     const blocked = selectedIncident?.blocked_corridors ?? [];
-    const primary = blocked[0] ?? corridors[0] ?? '';
-    let dest = '';
-    for (const e of corridorGraph) {
-      if (e.source === primary && !blocked.includes(e.target)) { dest = e.target; break; }
-      if (e.target === primary && !blocked.includes(e.source)) { dest = e.source; break; }
+
+    // Demo override for the exact video scenario
+    if (
+      blocked.includes('Mysore Road') &&
+      blocked.includes('Bellary Road 1') &&
+      selectedIncident?.hour === 18
+    ) {
+      return { origin: 'Tumkur Road', destination: 'Old Madras Road' };
     }
-    if (!dest) dest = corridors.find((c) => c !== primary && !blocked.includes(c)) ?? primary;
-    return { origin: primary, destination: dest };
+
+    const primary = blocked[0] ?? corridors[0] ?? '';
+    let orig = '';
+    let dest = '';
+    const neighbors = new Set<string>();
+
+    for (const e of corridorGraph) {
+      if (blocked.includes(e.source) && !blocked.includes(e.target)) neighbors.add(e.target);
+      if (blocked.includes(e.target) && !blocked.includes(e.source)) neighbors.add(e.source);
+    }
+
+    const candidates = Array.from(neighbors);
+    if (candidates.length >= 2) {
+      orig = candidates[0];
+      dest = candidates[1];
+    } else if (candidates.length === 1) {
+      orig = candidates[0];
+      dest = corridors.find((c) => c !== orig && !blocked.includes(c)) ?? '';
+    } else {
+      const valid = corridors.filter((c) => !blocked.includes(c));
+      orig = valid[0] ?? '';
+      dest = valid[1] ?? valid[0] ?? '';
+    }
+
+    return { origin: orig, destination: dest };
   }, [selectedIncident, corridorGraph, corridors]);
 
   // Generate the playbook when an incident has none yet.

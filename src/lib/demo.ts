@@ -16,7 +16,7 @@ function isoInHours(hoursFromNow: number): string {
  */
 export async function seedDemoScenario(): Promise<void> {
   await api.createIncident({
-    blocked_corridors: ["Mysore Road"],
+    blocked_corridors: ["Mysore Road", "Bellary Road 1"],
     hour: 18,
     label: "Road Collapse — Mysore Road",
   });
