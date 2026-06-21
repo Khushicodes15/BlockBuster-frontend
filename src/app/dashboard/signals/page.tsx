@@ -1,9 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { TrafficCone, Info, Timer } from 'lucide-react';
-import { useSignalsOverview } from '@/lib/queries';
+import { useQuery } from '@tanstack/react-query';
+import { useSignalsOverview, useIncidents } from '@/lib/queries';
+import * as api from '@/lib/api';
 import { vcTone, vcLabel } from '@/lib/traffic';
+import type { SignalsOverviewResponse } from '@/lib/types';
 import {
   PageHeader,
   StatusPill,
@@ -21,9 +24,46 @@ import {
 export default function SignalsPage() {
   const [hour, setHour] = useState(() => new Date().getHours());
   const sigQ = useSignalsOverview(hour);
-  const overrides = [...(sigQ.data?.signal_overrides ?? [])].sort(
-    (a, b) => b.green_phase_extension_seconds - a.green_phase_extension_seconds,
-  );
+
+  // Active incidents — used to augment the baseline signal picture
+  const incidentsQ = useIncidents('ACTIVE');
+  const activeIncidents = incidentsQ.data?.incidents ?? [];
+
+  // Auto-set the slider to the first incident's hour on initial load
+  const hourInitialised = useRef(false);
+  useEffect(() => {
+    if (!hourInitialised.current && activeIncidents.length > 0) {
+      const incidentHour = activeIncidents.find((i) => i.hour != null)?.hour;
+      if (incidentHour != null) {
+        setHour(incidentHour);
+        hourInitialised.current = true;
+      }
+    }
+  }, [activeIncidents]);
+
+  // Collect network states from every incident that has a completed playbook
+  const incidentNetworkStates = activeIncidents
+    .filter((i) => (i.playbook?.network_state?.length ?? 0) > 0)
+    .flatMap((i) => i.playbook!.network_state!);
+
+  // Fetch signal overrides that reflect the real disaster state
+  const incidentSignalsQ = useQuery<SignalsOverviewResponse>({
+    queryKey: ['incident-signals', activeIncidents.map((i) => i.id)],
+    queryFn: () => api.signalOverride(incidentNetworkStates),
+    enabled: incidentNetworkStates.length > 0,
+    refetchInterval: 60_000,
+  });
+
+  // Merge: incident-derived overrides reflect what's actually happening right
+  // now; baseline fills in corridors not touched by the disaster.
+  const incidentOverrides = incidentSignalsQ.data?.signal_overrides ?? [];
+  const baselineOverrides = sigQ.data?.signal_overrides ?? [];
+  const incidentCorridorSet = new Set(incidentOverrides.map((o) => o.corridor));
+
+  const overrides = [
+    ...incidentOverrides,
+    ...baselineOverrides.filter((o) => !incidentCorridorSet.has(o.corridor)),
+  ].sort((a, b) => b.green_phase_extension_seconds - a.green_phase_extension_seconds);
 
   return (
     <div className="h-full overflow-y-auto p-4 md:p-6">

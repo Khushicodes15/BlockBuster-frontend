@@ -142,7 +142,7 @@ export const generateAdvisory = (playbook: Playbook) =>
   sendJSON<AdvisoryResponse>("/advisory", "POST", { playbook });
 
 export const signalOverride = (networkState: Playbook["network_state"]) =>
-  sendJSON<Record<string, unknown>>("/signal-override", "POST", { network_state: networkState });
+  sendJSON<SignalsOverviewResponse>("/signal-override", "POST", { network_state: networkState });
 
 export const setBarricades = (blockedCorridors: string[], networkState: Playbook["network_state"]) =>
   sendJSON<Record<string, unknown>>("/barricades", "POST", {

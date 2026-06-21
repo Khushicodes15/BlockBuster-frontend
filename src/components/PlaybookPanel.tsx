@@ -168,17 +168,26 @@ export default function PlaybookPanel() {
     if (!canDispatch || !playbook || !selectedIncident) return;
     setIsDispatching(true);
     try {
+      // If the backend didn't return nearest_officers on GET, fall back to the
+      // session-local stream result so the deploy call still goes through.
+      const effectiveOfficers: NearestOfficer[] =
+        officers.length > 0 ? officers : (playbookResult?.nearest_officers ?? []);
+      const deployments = effectiveOfficers.map((o) => ({
+        police_station: o.police_station,
+        count: 1,
+      }));
+
+      // Deploy officers first — must not be blocked by SMS dispatch
+      if (!isMockIncident && deployments.length) {
+        await api.deployOfficers(selectedIncident.id, deployments);
+      }
+
       const advisory = await api.generateAdvisory(playbook);
       const advisoryText = advisory.advisory || 'Traffic advisory: avoid the affected corridors.';
       const recipients = ['+918851652548'];
       await api.dispatchSms(playbook, advisoryText, recipients);
 
-      const deployments = officers.map((o: NearestOfficer) => ({
-        police_station: o.police_station,
-        count: 1,
-      }));
       if (!isMockIncident) {
-        if (deployments.length) await api.deployOfficers(selectedIncident.id, deployments);
         await api.updateIncident(selectedIncident.id, {
           dispatch_result: {
             dispatched_at: new Date().toISOString(),
