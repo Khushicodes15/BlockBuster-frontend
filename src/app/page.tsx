@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ArrowRight, ShieldCheck, GitBranch, Scale, Radio } from 'lucide-react';
 import { BrandLogo } from '@/components/BrandLogo';
+import { BrandTitle } from '@/components/BrandTitle';
 
 const FEATURES = [
   {
@@ -35,9 +36,7 @@ export default function Landing() {
         <span className="inline-flex items-center gap-2 rounded-full border border-olive-200 bg-olive-50 px-3 py-1 text-[11px] font-bold tracking-wider text-olive-700 mb-6">
           <ShieldCheck className="w-3.5 h-3.5" /> HONEST AI FOR CITY TRAFFIC COMMAND
         </span>
-        <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight text-foreground max-w-3xl">
-          BlockBuster
-        </h1>
+        <BrandTitle />
         <p className="mt-4 text-base md:text-lg text-text-muted max-w-2xl">
           Detect, simulate and resolve traffic disruptions in real time — with response
           playbooks that are stress-tested and judged before a single unit is dispatched.
