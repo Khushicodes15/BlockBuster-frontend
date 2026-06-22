@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Users, Info, MapPin, Search } from 'lucide-react';
 import { useOfficersSummary, useStations } from '@/lib/queries';
+import { getStationDeployed, getTotalDeployed } from '@/lib/deploymentStore';
 import {
   PageHeader,
   StatCard,
@@ -28,11 +29,19 @@ export default function MarshalsPage() {
   const o = officersQ.data;
   const available = o?.available_officers ?? null;
   const total = o?.total_officers ?? null;
-  const deployed = available != null && total != null ? total - available : null;
+  // Use backend-computed deployed if available, then fall back to our local
+  // overlay (populated on dispatch so the count updates before the backend
+  // pool refreshes).
+  const backendDeployed = available != null && total != null ? total - available : 0;
+  const overlayDeployed = getTotalDeployed();
+  const deployed = o != null ? Math.max(backendDeployed, overlayDeployed) : null;
   const stations = stationsQ.data?.stations ?? [];
 
   const byStation = (o?.by_station ?? [])
-    .map((s) => ({ ...s, deployed: s.total - s.available }))
+    .map((s) => ({
+      ...s,
+      deployed: Math.max(s.total - s.available, getStationDeployed(s.police_station)),
+    }))
     .filter((s) => s.police_station.toLowerCase().includes(q.trim().toLowerCase()))
     .sort((a, b) => b.deployed - a.deployed || b.total - a.total);
 

@@ -33,6 +33,7 @@ import type {
   Station,
   Weather,
 } from '@/lib/types';
+import { getTotalDeployed } from '@/lib/deploymentStore';
 
 interface DashboardState {
   systemStatus: string;
@@ -115,8 +116,16 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const networkStatus = networkQ.data?.network_state ?? [];
   const upcomingEvents = eventsQ.data?.events ?? [];
 
+  // Apply the local deployment overlay so the top-bar count drops as soon as
+  // Dispatch is clicked, even before /officers/summary has been re-fetched.
   const availableMarshals: MarshalAvailability | null = officersQ.data
-    ? { available: officersQ.data.available_officers, total: officersQ.data.total_officers }
+    ? (() => {
+        const total = officersQ.data.total_officers;
+        const backendAvailable = officersQ.data.available_officers;
+        const backendDeployed = total - backendAvailable;
+        const effectiveDeployed = Math.max(backendDeployed, getTotalDeployed());
+        return { available: Math.max(0, total - effectiveDeployed), total };
+      })()
     : null;
 
   const systemStatus = health.isLoading

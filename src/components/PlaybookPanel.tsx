@@ -22,6 +22,7 @@ import {
 import { toast } from 'sonner';
 import * as api from '@/lib/api';
 import type { JudgingCheck, NearestOfficer } from '@/lib/types';
+import { cacheOfficers, getCachedOfficers, recordDeployment } from '@/lib/deploymentStore';
 import { Badge, StatusPill } from './ui/Badge';
 import { Button } from './ui/Button';
 import { DemoSeeder } from './DemoSeeder';
@@ -75,6 +76,7 @@ export default function PlaybookPanel() {
   const [scriptManuallyOpen, setScriptManuallyOpen] = useState(false);
   const [wcApproved, setWcApproved] = useState(false);
   const [dispatchedId, setDispatchedId] = useState<string | number | null>(null);
+  const [dispatchedAdvisory, setDispatchedAdvisory] = useState<string | null>(null);
 
   const scriptOpen = scriptManuallyOpen || isRunning;
   const playbook = selectedIncident?.playbook;
@@ -160,6 +162,14 @@ export default function PlaybookPanel() {
     }
   }, [playbookResult, selectedIncident, isMockIncident, updateLocalIncidentPlaybook, refreshData]);
 
+  // Cache nearest_officers in module-level store so dispatch works even if
+  // the user navigates away and back before clicking Dispatch.
+  useEffect(() => {
+    if (playbookResult && selectedIncident) {
+      cacheOfficers(selectedIncident.id, playbookResult.nearest_officers ?? []);
+    }
+  }, [playbookResult, selectedIncident]);
+
   useEffect(() => {
     terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
@@ -169,9 +179,14 @@ export default function PlaybookPanel() {
     setIsDispatching(true);
     try {
       // If the backend didn't return nearest_officers on GET, fall back to the
-      // session-local stream result so the deploy call still goes through.
+      // session-local stream result, then to the module-level cache (survives
+      // navigation between playbook generation and dispatch).
       const effectiveOfficers: NearestOfficer[] =
-        officers.length > 0 ? officers : (playbookResult?.nearest_officers ?? []);
+        officers.length > 0
+          ? officers
+          : (playbookResult?.nearest_officers?.length
+              ? playbookResult.nearest_officers
+              : getCachedOfficers(selectedIncident.id));
       const deployments = effectiveOfficers.map((o) => ({
         police_station: o.police_station,
         count: 1,
@@ -180,10 +195,14 @@ export default function PlaybookPanel() {
       // Deploy officers first — must not be blocked by SMS dispatch
       if (!isMockIncident && deployments.length) {
         await api.deployOfficers(selectedIncident.id, deployments);
+        // Record locally so the Marshals page reflects the change immediately,
+        // even if /officers/summary hasn't updated on the backend yet.
+        recordDeployment(deployments);
       }
 
       const advisory = await api.generateAdvisory(playbook);
       const advisoryText = advisory.advisory || 'Traffic advisory: avoid the affected corridors.';
+      setDispatchedAdvisory(advisoryText);
       const recipients = ['+918851652548'];
       await api.dispatchSms(playbook, advisoryText, recipients);
 
@@ -198,8 +217,11 @@ export default function PlaybookPanel() {
         });
       }
       setDispatchedId(selectedIncident.id);
+      const advisorySnippet = advisoryText.length > 100
+        ? advisoryText.slice(0, 100) + '…'
+        : advisoryText;
       toast.success('Dispatched to ground units', {
-        description: `${deployments.length} unit(s) deployed · advisory sent`,
+        description: `${deployments.length} unit(s) deployed · ${advisorySnippet}`,
       });
       await refreshData();
     } catch (err) {
@@ -258,11 +280,15 @@ export default function PlaybookPanel() {
     {
       icon: <Volume2 className="w-4 h-4 text-accent-olive" />,
       title: 'Public Advisory',
-      detail: hasPlaybook
-        ? diversion?.path?.length
-          ? `Diversion: ${diversion.path.join(' → ')}`
-          : 'No reroute available — advisory will recommend delaying travel'
-        : 'Send traffic advisory to commuters',
+      detail: executed && dispatchedAdvisory
+        ? (dispatchedAdvisory.length > 90
+            ? dispatchedAdvisory.slice(0, 90) + '…'
+            : dispatchedAdvisory)
+        : hasPlaybook
+          ? diversion?.path?.length
+            ? `Diversion: ${diversion.path.join(' → ')}`
+            : 'No reroute available — advisory will recommend delaying travel'
+          : 'Send traffic advisory to commuters',
       state: stepState(hasPlaybook),
     },
   ];
